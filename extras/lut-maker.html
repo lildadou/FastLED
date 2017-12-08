@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Convert 3D LUT</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/styles/default.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/languages/cpp.min.js"></script>
+  <script>hljs.initHighlightingOnLoad();</script>
+</head>
+<body>
+<p>
+  <label for="lut-file-input">Select a file</label>
+  <input id="lut-file-input" type="file"
+         accept=".3dl">
+</p>
+<div>
+  <pre>
+    <code id="output" class="cpp"></code>
+
+  </pre>
+</div>
+<script>
+  var output = document.getElementById("output");
+  var lutFileInput = document.getElementById("lut-file-input");
+  lutFileInput.addEventListener('change', onFileChange, false);
+
+  var parsers = {
+    "3dl": {
+      parseHeader: function(lines) {
+        lines.shift();
+        var inputRange = parseInt( /# INPUT RANGE: (\d+)\s*$/.exec(lines.shift())[1] );
+        var outputRange = parseInt( /# OUTPUT RANGE: (\d+)\s*$/.exec(lines.shift())[1] );
+        var header = lines.shift().split(" ").map(parseInt);
+        var cubeSize = header.length;
+        return {
+          inputRange: inputRange,
+          outputRange: outputRange,
+          cubeSize: cubeSize
+        };
+      },
+      parseEntry: function(textEntry) {
+        var e = textEntry.split(" ").map(function (c) { return parseInt(c); });
+        return {
+          r: e[0],
+          g: e[1],
+          b: e[2]
+        };
+      }
+    }
+  };
+
+  function onFileChange() {
+    var reader = new FileReader();
+    var file = this.files[0];
+    var fileExt = file.name.split('.').pop();
+    if (parsers[fileExt] === undefined) {
+      alert("This file ext is not supported");
+      return;
+    }
+
+    reader.onloadend = function(readerEvent) {
+      onFileReaded(readerEvent.target.result, fileExt);
+    };
+    reader.readAsText(file);
+  }
+
+  function onFileReaded(fileContent, fileExt) {
+    var lutModel = parseFileContent(fileContent, parsers[fileExt]);
+    var cppLut = compile(lutModel);
+    output.textContent = cppLut;
+  }
+
+  function parseFileContent(fileContent, parser) {
+    var lines = fileContent.split("\n");
+    var header = parser.parseHeader(lines);
+    var cubeDims = header.cubeSize;
+    var cubeArray = makeCube(cubeDims);
+    var indexes = [0, 0, -1];
+    while (hasNext3DIndex(indexes, cubeDims)) {
+      inc3DIndex(indexes, cubeDims);
+      var line = lines.shift();
+      var lutEntry = parser.parseEntry(line);
+      cubeArray[indexes[0]][indexes[1]][indexes[2]] = lutEntry;
+    }
+
+    return {
+      header: header,
+      cube: cubeArray
+    };
+  }
+
+  function compile(lutModel) {
+    var d = lutModel.header.cubeSize,
+        result = "CRGB data["+d+"]["+d+"]["+d+"] = ";
+
+    result += compilCube(lutModel.cube);
+
+    return result;
+
+    function compileEntry(entry) {
+      return "CRGB("+[entry.r, entry.g, entry.b].join(",")+")";
+    }
+
+    function compileRedArray(a) {
+      return "\t{\n" + a.map(compileGreenArray.bind(null)).join(",\n") + "\n\t}";
+    }
+
+    function compileGreenArray(a) {
+      return "\t\t{ " + a.map(compileEntry.bind(null)).join(", ") + " }";
+    }
+
+    function compilCube(cube) {
+      return "{\n"+cube.map(compileRedArray.bind(null)).join(", ") +"\n};";
+    }
+
+  }
+
+  function makeCube(dim, depth) {
+    var _d = (typeof depth === "undefined")?3:depth;
+    var result = Array(dim).fill(0);
+    if (_d > 1) {
+      return result.map(makeCube.bind(null, dim, _d-1));
+    } else {
+      return result;
+    }
+  }
+
+  function hasNext3DIndex(indexes, dim) {
+    return indexes.reduce(function (acc, i) { return acc+i;}, 0) < (dim-1)*3;
+  }
+
+  function inc3DIndex(indexes, dim) {
+    indexes[2] += 1;
+    for (var i=2; i > 0; i--) {
+      if (indexes[i] >= dim) {
+        indexes[i-1] += 1;
+        indexes[i] %= dim;
+      }
+    }
+
+    return indexes;
+  }
+</script>
+</body>
+</html>
